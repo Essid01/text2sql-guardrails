@@ -1,0 +1,58 @@
+# Business glossary: ambiguous terms detected BEFORE calling the LLM.
+#
+# An entry triggers when one of `triggers` matches the question and none of
+# `resolved_by` does. Patterns are case-insensitive regular expressions.
+# Invariant (tested): appending any option's `interpretation` to the question
+# must resolve the ambiguity, so the clarification loop always terminates.
+
+- id: revenue_gross_or_net
+  triggers:
+    - '\brevenues?\b'
+    - '\bturnover\b'
+    - '\bsales (amount|value)s?\b'
+    - "\\bchiffres? d'affaires\\b"
+  resolved_by:
+    - '\bgross\b'
+    - '\bnet\b'
+    - '\bbruts?\b'
+    - '\bbefore discounts?\b'
+    - '\bafter discounts?\b'
+  question: Do you mean gross revenue (before discounts) or net revenue (after discounts)?
+  options:
+    - label: Gross revenue
+      interpretation: gross revenue = quantity * unit_price, before discounts
+    - label: Net revenue
+      interpretation: net revenue = quantity * unit_price * (1 - discount), after discounts
+
+- id: month_without_year
+  triggers:
+    # A month name only counts after a preposition: avoids "may" (verb), "Mars" (brand).
+    - '\b(in|during|for|since|of|until) (january|february|march|april|may|june|july|august|september|october|november|december)\b'
+    - "\\b(en|pendant|depuis|de|d'|jusqu'en) ?(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\\b"
+  resolved_by:
+    - '\b20\d\d\b'
+    - '\b(each|every|per|by) (month|year)\b'
+    - '\bpar (mois|an|année)\b'
+  question: The data covers 2024 and 2025. Which year do you mean?
+  options:
+    - label: "2024"
+      interpretation: in 2024
+    - label: "2025"
+      interpretation: in 2025
+    - label: Both years
+      interpretation: in 2024 and 2025 combined
+
+- id: best_customers_metric
+  triggers:
+    - '\b(best|top|biggest|most valuable)( \d+)? customers\b'
+    - '\b(meilleurs|plus gros|principaux)( \d+)? clients\b'
+  resolved_by:
+    - '\bby\b'
+    - '\bpar\b'
+    - '\b(number of orders|spend|spent|revenue|units)\b'
+  question: How should "best customers" be ranked?
+  options:
+    - label: By net spend
+      interpretation: ranked by net spend on completed orders
+    - label: By number of orders
+      interpretation: ranked by number of completed orders

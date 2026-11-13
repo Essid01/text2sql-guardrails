@@ -2,7 +2,7 @@
 
 ## État actuel — 2026-11-13
 
-**Phase en cours :** Phase 1 — étape 1.3 (embedder + filtrage) codée, en attente de commit. Étapes 1.1 (`b5ac788`) et 1.2 (`6dde69a`) commitées.
+**Phase en cours :** Phase 1 **terminée** (étapes 1.4 et 1.5 en attente de commit) → relecture avant la Phase 2.
 
 ### Fait
 - Phase 0 : squelette du dépôt, config typée, CI (commit `5be3fc3`).
@@ -22,6 +22,17 @@
   - `schema/retriever.py` : `SchemaRetriever` = top-k par similarité cosinus + ajout des tables « pont » (plus court chemin FK entre chaque paire retenue, BFS). Résultat explicable (`scores`, `by_similarity`, `added_as_bridge`).
   - `sentence-transformers` en extra optionnel `[embeddings]` (torch ~1 Go) → CI sans torch.
   - Commentaires enrichis sur `orders` / `order_items` (dictionnaire de données : « source of all revenue… »).
+
+- Étape 1.4 :
+  - `prompt/schema_render.py` : schéma rendu en DDL commenté (types, PK/FK, commentaires, valeurs catégorielles, nb de lignes). Schéma complet ≈ 1 200 tokens.
+  - `prompt/templates/sql_system.md` : system prompt : rôle, ancrage au schéma, conventions métier, style SQL, cas de refus/clarification.
+  - `prompt/examples.yaml` : 6 exemples few-shot écrits à la main, chacun exécuté par un test d'intégration.
+  - `prompt/builder.py` : `PromptBuilder` → system statique + message user `<schema>` / `<examples>` / `<question>` ; 3 exemples choisis par similarité (embedder) ou dans l'ordre (sans embedder) ; schéma complet ou filtré (retriever optionnel). Prompt complet ≈ 2 300 tokens.
+- Étape 1.5 :
+  - `prompt/glossary.yaml` + `prompt/ambiguity.py` : détection déterministe des ambiguïtés connues **avant** l'appel LLM (CA brut/net, mois sans année, « meilleurs clients » sans métrique), en EN et FR ; `apply_clarification()` réécrit la question avec l'option choisie.
+  - Invariant testé : chaque option résout l'ambiguïté qu'elle clarifie (la boucle de clarification se termine toujours).
+- Démo : `python -m text2sql.prompt.show "question"` affiche les clarifications éventuelles et le prompt complet, sans appel LLM.
+- Tests : 73 (unitaires + intégration + vrai embedder), tous verts.
 
 ### Décisions
 - **Modèle : `claude-haiku-5-5` partout (dev ET éval)** — le moins cher (0,10 $ / 0,50 $ par MTok si prompt ≤ 100K tokens). Configuré dans `.env`, jamais en dur. Effort `low` par défaut.
@@ -53,12 +64,15 @@
 
   (rappel = toutes les tables nécessaires sont retenues ; mesure après enrichissement des commentaires pour MiniLM-L6.) Avec 7 tables, filtrer économise peu et fait parfois perdre une table indispensable (ex. `orders` pour un filtre d'année : aucun mot de la question ne la désigne). Le retriever reste dans le code et sera comparé au schéma complet en Phase 5 (50 questions). Modèle retenu : `all-MiniLM-L6-v2` (le multilingue n'est pas meilleur, même en français, et 2× plus lent).
 
+- System prompt : règles accompagnées de leur raison (plutôt que des MAJUSCULES) ; le prompt n'est PAS la sécurité (guardrails en Phase 2 = défense en profondeur).
+- Ambiguïtés : glossaire déterministe (gratuit, testable) + le LLM pourra demander une clarification pour les cas inconnus (Phase 2). Mois détecté seulement après une préposition (« in May », « en mars ») pour éviter « may » (verbe) et « Mars » (marque).
+- Les questions de `examples.yaml` ne doivent **pas** être réutilisées dans le jeu d'évaluation (Phase 5).
+
 ### Reste à faire
-- Phase 1 : 1.4 prompt builder, 1.5 ambiguïté.
 - Phases 2 à 6.
 
 ### Prochaine étape
-- Committer l'étape 1.3, puis étape 1.4 : prompt builder. **Écrire d'abord le template d'instructions.**
+- Commits 1.4 et 1.5, puis plan détaillé de la Phase 2 (client LLM `LLMClient` + instructor + cache, guardrails écrits en tests d'abord, sandbox read-only). **Clé `ANTHROPIC_API_KEY` nécessaire à partir de la Phase 2.**
 
 ### Blocages
 - ~~Docker absent~~ → résolu (2026-11-13) : Docker Desktop 29.9 + WSL 2 installés, PostgreSQL 16 lancé via compose, seed complet chargé en ~24 s, test d'intégration vert. Pour reprendre : lancer Docker Desktop puis `docker compose up -d db` (les données persistent dans le volume `pgdata`).
