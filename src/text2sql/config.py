@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     schema_top_k: int | None = Field(default=None, gt=0)
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
+    # Hallucination detection (Phase 3). Each LLM check adds cost per question.
+    verify_backtranslation: bool = True  # 2 calls (~$0.0003)
+    verify_multi_query: bool = True  # 1 generation + 1 execution (~$0.0007)
+    hallucination_threshold: float = Field(default=0.6, ge=0, le=1)
+
     # Logging
     log_level: str = "INFO"
     audit_log_path: str = "logs/audit.jsonl"

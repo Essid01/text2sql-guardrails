@@ -132,3 +132,17 @@ def test_every_question_is_audited(tmp_path, question: str) -> None:
     assert records[0]["question"] == question
     assert records[0]["status"] in {"executed", "clarification"}
     assert "timestamp" in records[0] and "usage" in records[0]
+
+
+def test_executed_answer_is_verified_and_audited(tmp_path) -> None:
+    from text2sql.verification.verifier import Verifier
+
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    pipeline, _ = _pipeline(_sql("SELECT COUNT(*) AS n FROM orders"), audit=audit)
+    pipeline.verifier = Verifier(SCHEMA)
+    response = pipeline.ask("How many orders?")
+    assert response.verification is not None
+    assert 0 <= response.verification.confidence.score <= 1
+    record = json.loads(audit.path.read_text("utf-8").splitlines()[0])
+    assert record["confidence"] == response.verification.confidence.score
+    assert record["likely_hallucination"] is False

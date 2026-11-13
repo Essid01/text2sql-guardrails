@@ -71,7 +71,7 @@ def compare_results(a: QueryResult, b: QueryResult) -> tuple[Agreement, str]:
     """Compare two results as multisets of rows (order of rows/columns ignored).
 
     Exact match on normalized values first; otherwise accept a numeric match (same
-    numbers per row) because two correct queries often differ only by a label or id
+    numbers per row) because two correct queries often differ only by a label
     column (e.g. one query also returns the category name). Known limit: a name in one
     query and a numeric id in the other is reported as a mismatch.
     """

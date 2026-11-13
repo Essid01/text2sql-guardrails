@@ -32,6 +32,7 @@ from text2sql.prompt.ambiguity import (
     GlossaryEntry,
     detect_ambiguities,
 )
+from text2sql.verification.verifier import VerificationReport, Verifier
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class PipelineResponse(BaseModel):
     sql_executed: str | None = None  # SQL actually run (rewritten by the guardrails)
     violations: list[Violation] = []
     result: QueryResult | None = None
+    verification: VerificationReport | None = None  # only for executed queries
     error: str | None = None
     usage: dict[str, float] = {}
     duration_ms: float = 0.0
@@ -74,12 +76,14 @@ class Text2SQLPipeline:
         executor: Executor,
         glossary: list[GlossaryEntry],
         audit: AuditLog | None = None,
+        verifier: Verifier | None = None,
     ) -> None:
         self.generator = generator
         self.guard_config = guard_config
         self.executor = executor
         self.glossary = glossary
         self.audit = audit
+        self.verifier = verifier
 
     def ask(self, question: str) -> PipelineResponse:
         start = time.perf_counter()
@@ -145,8 +149,20 @@ class Text2SQLPipeline:
             return PipelineResponse(question=question, status=Status.ERROR, generation=output,
                                     sql_executed=guard.sql, error=str(exc))  # fmt: skip
 
-        return PipelineResponse(question=question, status=Status.EXECUTED, generation=output,
-                                sql_executed=guard.sql, result=result)  # fmt: skip
+        # 5. Hallucination checks (only a valid, executed query can be verified).
+        verification = None
+        if self.verifier is not None:
+            verification = self.verifier.verify(question, output, guard.sql, result)
+            for usage in verification.usages:
+                tracker.add(usage)
+        return PipelineResponse(
+            question=question,
+            status=Status.EXECUTED,
+            generation=output,
+            sql_executed=guard.sql,
+            result=result,
+            verification=verification,
+        )
 
     def _audit(self, r: PipelineResponse) -> None:
         if self.audit is None:
@@ -163,6 +179,15 @@ class Text2SQLPipeline:
             "error": r.error,
             "row_count": r.result.row_count if r.result else None,
             "estimated_cost": r.result.estimated_cost if r.result else None,
+            "confidence": r.verification.confidence.score if r.verification else None,
+            "likely_hallucination": (
+                r.verification.confidence.likely_hallucination if r.verification else None
+            ),
+            "agreement": (
+                r.verification.consensus.agreement
+                if r.verification and r.verification.consensus
+                else None
+            ),
             "duration_ms": r.duration_ms,
             "usage": r.usage,
         })  # fmt: skip

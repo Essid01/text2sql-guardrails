@@ -22,6 +22,9 @@ from text2sql.prompt.builder import PromptBuilder
 from text2sql.schema import introspect
 from text2sql.schema.embedder import Embedder, SentenceTransformerEmbedder
 from text2sql.schema.retriever import SchemaRetriever
+from text2sql.verification.backtranslation import BackTranslator
+from text2sql.verification.consensus import ALTERNATE_SUFFIX, ConsensusChecker
+from text2sql.verification.verifier import Verifier
 
 
 def _optional_embedder(settings: Settings) -> Embedder | None:
@@ -42,19 +45,34 @@ def build_pipeline(settings: Settings, use_embedder: bool = True) -> Text2SQLPip
     if settings.schema_top_k is not None and embedder is not None:
         retriever = SchemaRetriever(schema, embedder, top_k=settings.schema_top_k)
     builder = PromptBuilder(schema, embedder=embedder, retriever=retriever)
+    llm = build_llm_client(settings)
+    guard_config = GuardrailConfig(
+        allowed_tables=frozenset(schema.table_names), max_rows=settings.max_result_rows
+    )
+    executor = QueryExecutor(
+        settings.readonly_database_url,
+        max_rows=settings.max_result_rows,
+        timeout_ms=settings.query_timeout_ms,
+        max_cost=settings.max_query_cost,
+    )
+    consensus = None
+    if settings.verify_multi_query:
+        # Zero-shot + extra instruction: a different prompt and a different approach.
+        alternate = PromptBuilder(schema, examples=[], system_suffix=ALTERNATE_SUFFIX)
+        consensus = ConsensusChecker(SQLGenerator(alternate, llm), guard_config, executor)
+    verifier = Verifier(
+        schema,
+        backtranslator=BackTranslator(llm, schema) if settings.verify_backtranslation else None,
+        consensus=consensus,
+        threshold=settings.hallucination_threshold,
+    )
     return Text2SQLPipeline(
-        generator=SQLGenerator(builder, build_llm_client(settings)),
-        guard_config=GuardrailConfig(
-            allowed_tables=frozenset(schema.table_names), max_rows=settings.max_result_rows
-        ),
-        executor=QueryExecutor(
-            settings.readonly_database_url,
-            max_rows=settings.max_result_rows,
-            timeout_ms=settings.query_timeout_ms,
-            max_cost=settings.max_query_cost,
-        ),
+        generator=SQLGenerator(builder, llm),
+        guard_config=guard_config,
+        executor=executor,
         glossary=load_glossary(),
         audit=AuditLog(settings.audit_log_path),
+        verifier=verifier,
     )
 
 
@@ -85,6 +103,19 @@ def render(response: PipelineResponse, max_rows: int = 20) -> str:
         more = " (truncated)" if result.truncated else ""
         lines.append(f"({result.row_count} rows{more}, {result.duration_ms} ms, "
                      f"cost {result.estimated_cost:,.0f})")  # fmt: skip
+    if (v := response.verification) is not None:
+        c = v.confidence
+        flag = "  <-- LIKELY HALLUCINATION" if c.likely_hallucination else ""
+        lines.append(f"confidence: {c.score:.2f} ({c.level}){flag}")
+        parts = ", ".join(
+            f"{k}={'n/a' if x is None else f'{x:.2f}'}" for k, x in c.components.items()
+        )
+        lines.append(f"  signals: {parts}")
+        if v.backtranslation:
+            lines.append(f"  back-translation: {v.backtranslation.reconstructed_question}")
+        if v.consensus:
+            lines.append(f"  second query: {v.consensus.agreement} ({v.consensus.detail})")
+        lines += [f"  ! {reason}" for reason in c.reasons]
     u = response.usage
     lines.append(f"llm: {u.get('api_calls', 0):.0f} call(s), {u.get('input_tokens', 0):.0f} in / "
                  f"{u.get('output_tokens', 0):.0f} out tokens, ${u.get('cost_usd', 0):.5f} "
