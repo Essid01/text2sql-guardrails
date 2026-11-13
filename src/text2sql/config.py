@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # Read-only role used to EXECUTE generated SQL (created by the seed script).
     readonly_database_url: str | None = None
     query_timeout_ms: int = Field(default=5000, gt=0)
+    # Planner cost above which a query is refused before running (EXPLAIN). Measured:
+    # normal analytics 300-4,000; cartesian products / large self-joins > 700,000.
+    max_query_cost: float = Field(default=100_000, gt=0)
+    max_result_rows: int = Field(default=1000, gt=0)
 
     # Schema retrieval. None = send the full schema (measured better on our 7 tables).
     schema_top_k: int | None = Field(default=None, gt=0)

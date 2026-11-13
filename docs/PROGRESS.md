@@ -86,4 +86,4 @@
 
 ### Blocages
 - ~~Docker absent~~ → résolu (2026-11-13) : Docker Desktop 29.9 + WSL 2 installés, PostgreSQL 16 lancé via compose, seed complet chargé en ~24 s, test d'intégration vert. Pour reprendre : lancer Docker Desktop puis `docker compose up -d db` (les données persistent dans le volume `pgdata`).
-- Pas encore de remote GitHub configuré.
+- ~~Pas de remote~~ → résolu (2026-11-13) : `origin` = https://github.com/Essid01/text2sql-guardrails (privé). Chaque commit est poussé.
