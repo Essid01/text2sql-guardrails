@@ -68,9 +68,10 @@ class PromptBuilder:
         embedder: Embedder | None = None,
         n_examples: int = 3,
         retriever: SchemaRetriever | None = None,
+        system_suffix: str = "",
     ) -> None:
         self.schema = schema
-        self.system = load_system_prompt()
+        self.system = load_system_prompt() + system_suffix
         self.examples = load_examples() if examples is None else examples
         self.embedder = embedder
         self.n_examples = n_examples
