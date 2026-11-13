@@ -2,7 +2,7 @@
 
 ## État actuel — 2026-11-13
 
-**Phase en cours :** Phase 1 **terminée** (étapes 1.4 et 1.5 en attente de commit) → relecture avant la Phase 2.
+**Phase en cours :** Phase 2 — étape 2.1 (client LLM + cache) codée, en attente de commit. Phase 1 commitée (`e20db0d`, `25e4ce4`).
 
 ### Fait
 - Phase 0 : squelette du dépôt, config typée, CI (commit `5be3fc3`).
@@ -33,6 +33,11 @@
   - Invariant testé : chaque option résout l'ambiguïté qu'elle clarifie (la boucle de clarification se termine toujours).
 - Démo : `python -m text2sql.prompt.show "question"` affiche les clarifications éventuelles et le prompt complet, sans appel LLM.
 - Tests : 73 (unitaires + intégration + vrai embedder), tous verts.
+- Étape 2.1 :
+  - `llm/client.py` : interface `LLMClient` ; `AnthropicClient` (SDK natif `messages.parse`, effort dans `output_config`, aucun paramètre d'échantillonnage, refus et troncature → exceptions typées, 1 nouvelle tentative si un validateur Pydantic échoue) ; `FakeLLMClient` ; `UsageTracker` (appels, tokens, coût).
+  - `llm/cache.py` : `CachedLLMClient` (SQLite, clé = hash modèle + paramètres + prompts + schéma de sortie). Un hit coûte 0 et garde les tokens d'origine.
+  - `llm/factory.py` : client configuré depuis `.env`.
+  - Tests : 10 unitaires (SDK simulé) + 1 test réel `-m llm`.
 
 ### Décisions
 - **Modèle : `claude-haiku-5-5` partout (dev ET éval)** — le moins cher (0,10 $ / 0,50 $ par MTok si prompt ≤ 100K tokens). Configuré dans `.env`, jamais en dur. Effort `low` par défaut.
@@ -68,11 +73,16 @@
 - Ambiguïtés : glossaire déterministe (gratuit, testable) + le LLM pourra demander une clarification pour les cas inconnus (Phase 2). Mois détecté seulement après une préposition (« in May », « en mars ») pour éviter « may » (verbe) et « Mars » (marque).
 - Les questions de `examples.yaml` ne doivent **pas** être réutilisées dans le jeu d'évaluation (Phase 5).
 
+- **SDK natif au lieu d'instructor** (choisi sur mesure réelle avec Haiku 5.5) : `messages.parse` garantit un JSON conforme au schéma et consomme 381 tokens d'entrée contre 654 pour instructor en mode tools (+70 %, définition d'outil envoyée à chaque appel). instructor 1.17 n'a pas de mode pour les structured outputs natifs. La nouvelle tentative sur erreur de validation (seul apport restant d'instructor) est réécrite en ~10 lignes.
+- **Parseur SQL : sqlglot** (AST PostgreSQL) au lieu de sqlparse (simple tokenizer).
+- SDK `anthropic` 2.8 importé paresseusement (son import prend plusieurs secondes sur cette machine).
+- Tests `llm` exécutés uniquement avec `pytest -m llm` (hook dans `conftest.py`) : un `-m` dans `addopts` est remplacé par tout `-m` passé en ligne de commande.
+
 ### Reste à faire
 - Phases 2 à 6.
 
 ### Prochaine étape
-- Commits 1.4 et 1.5, puis plan détaillé de la Phase 2 (client LLM `LLMClient` + instructor + cache, guardrails écrits en tests d'abord, sandbox read-only). **Clé `ANTHROPIC_API_KEY` nécessaire à partir de la Phase 2.**
+- Commit 2.1, puis 2.2 (modèle de sortie `SQLGeneration`), 2.3 guardrails (tests d'abord, sqlglot), 2.4 rôle read-only, 2.5 exécution + EXPLAIN + audit, 2.6 pipeline `python -m text2sql.ask`.
 
 ### Blocages
 - ~~Docker absent~~ → résolu (2026-11-13) : Docker Desktop 29.9 + WSL 2 installés, PostgreSQL 16 lancé via compose, seed complet chargé en ~24 s, test d'intégration vert. Pour reprendre : lancer Docker Desktop puis `docker compose up -d db` (les données persistent dans le volume `pgdata`).

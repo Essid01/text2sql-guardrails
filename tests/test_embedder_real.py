@@ -3,16 +3,17 @@
 import numpy as np
 import pytest
 
-pytest.importorskip("sentence_transformers")
-
-from text2sql.config import Settings  # noqa: E402
-from text2sql.schema.embedder import SentenceTransformerEmbedder  # noqa: E402
+from text2sql.config import Settings
+from text2sql.schema.embedder import SentenceTransformerEmbedder
 
 pytestmark = pytest.mark.embeddings
 
 
 @pytest.fixture(scope="module")
 def embedder() -> SentenceTransformerEmbedder:
+    # Imported here, not at module level: importing torch takes ~40 s and would slow
+    # down the collection of every test run, even when these tests are deselected.
+    pytest.importorskip("sentence_transformers")
     return SentenceTransformerEmbedder(Settings(_env_file=None).embedding_model)
 
 

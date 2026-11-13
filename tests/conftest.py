@@ -13,6 +13,19 @@ from text2sql.config import get_settings
 from text2sql.db.seed import SeedConfig, Table, _conninfo, generate, load
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Real LLM calls cost money: run them only when explicitly selected with `-m llm`.
+
+    A marker filter in `addopts` is not enough: any `-m` on the command line replaces it.
+    """
+    if "llm" in (config.getoption("markexpr") or "").replace("not llm", ""):
+        return
+    skip = pytest.mark.skip(reason="real LLM call: run with `pytest -m llm`")
+    for item in items:
+        if "llm" in item.keywords:
+            item.add_marker(skip)
+
+
 @pytest.fixture(scope="session")
 def database_url() -> str:
     """URL of a reachable test database (`<db>_test`), or skip the test."""
