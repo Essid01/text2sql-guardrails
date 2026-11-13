@@ -22,3 +22,32 @@ jobs:
           ruff format --check .
       - name: Unit tests (LLM mocked, no API key)
         run: pytest -m "not integration and not llm"
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: text2sql
+          POSTGRES_PASSWORD: text2sql
+          POSTGRES_DB: retail
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U text2sql -d retail"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://text2sql:text2sql@localhost:5432/retail
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Integration tests (real PostgreSQL, no LLM)
+        run: pytest -m "integration and not llm"
+      - name: Full seed smoke test
+        run: python -m text2sql.db.seed

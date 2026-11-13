@@ -11,6 +11,7 @@ cp .env.example .env          # then fill in ANTHROPIC_API_KEY and LLM_MODEL
 docker compose up -d db       # PostgreSQL 16
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
+python -m text2sql.db.seed    # create schema + load synthetic retail data (~40k orders)
 pytest
 ```
 
