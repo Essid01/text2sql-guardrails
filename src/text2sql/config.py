@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+psycopg://text2sql:text2sql@localhost:5432/retail"
 
+    # Schema retrieval. None = send the full schema (measured better on our 7 tables).
+    schema_top_k: int | None = Field(default=None, gt=0)
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+
     # Logging
     log_level: str = "INFO"
 

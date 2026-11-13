@@ -98,12 +98,12 @@ COMMENT ON TABLE customers IS 'Registered customers.';
 COMMENT ON COLUMN customers.region IS 'French administrative region of the customer address.';
 COMMENT ON COLUMN customers.loyalty_tier IS 'Tier based on lifetime net spend on completed orders.';
 
-COMMENT ON TABLE orders IS 'Customer orders (one row per order).';
+COMMENT ON TABLE orders IS 'Customer orders / purchases (one row per order): when (order date), who (customer), where (store, channel), status. Needed for any time-based or status-based filter on sales.';
 COMMENT ON COLUMN orders.order_date IS 'Local date and time the order was placed. Data covers 2024-01-01 to 2025-12-31.';
 COMMENT ON COLUMN orders.shipped_date IS 'Shipping date for online orders. NULL for in-store purchases, cancelled or pending orders.';
 COMMENT ON COLUMN orders.status IS 'Only completed orders count as realized sales; returned orders were refunded.';
 
-COMMENT ON TABLE order_items IS 'Order lines (one row per product in an order).';
+COMMENT ON TABLE order_items IS 'Order lines / sales lines (one row per product in an order): quantities sold, prices, discounts. Source of all revenue, sales amount, basket and units-sold figures.';
 COMMENT ON COLUMN order_items.unit_price IS 'Unit price in EUR at the time of sale, before discount.';
 COMMENT ON COLUMN order_items.discount IS 'Discount rate applied to the line (0.10 = 10%). Gross amount = quantity * unit_price; net amount = quantity * unit_price * (1 - discount).';
 

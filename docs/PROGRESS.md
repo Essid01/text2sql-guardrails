@@ -2,7 +2,7 @@
 
 ## État actuel — 2026-11-13
 
-**Phase en cours :** Phase 1 — étape 1.2 (introspection) codée, en attente de commit. Étape 1.1 commitée (`b5ac788`).
+**Phase en cours :** Phase 1 — étape 1.3 (embedder + filtrage) codée, en attente de commit. Étapes 1.1 (`b5ac788`) et 1.2 (`6dde69a`) commitées.
 
 ### Fait
 - Phase 0 : squelette du dépôt, config typée, CI (commit `5be3fc3`).
@@ -17,6 +17,11 @@
   - `src/text2sql/schema/models.py` : modèles Pydantic `DatabaseSchema` / `TableInfo` / `ColumnInfo` / `ForeignKeyInfo`, avec `neighbors()` (voisins par FK, dans les deux sens) et `subset()` — préparent le filtrage de l'étape 1.3.
   - `src/text2sql/schema/introspect.py` : `introspect(engine)` via `sqlalchemy.inspect` : tables, colonnes, types, nullabilité, PK (y compris composite), FK, commentaires, estimation du nombre de lignes (`pg_class.reltuples`), valeurs d'exemple des colonnes texte à ≤ 20 valeurs distinctes. ~0,7 s sur la base complète.
   - Tests d'intégration sur une base dédiée `retail_test` (créée automatiquement) → les tests n'écrasent plus la base `retail`.
+- Étape 1.3 :
+  - `schema/embedder.py` : interface `Embedder` (Protocol) ; `SentenceTransformerEmbedder` (local, CPU, import paresseux) ; `HashingEmbedder` déterministe pour les tests/CI.
+  - `schema/retriever.py` : `SchemaRetriever` = top-k par similarité cosinus + ajout des tables « pont » (plus court chemin FK entre chaque paire retenue, BFS). Résultat explicable (`scores`, `by_similarity`, `added_as_bridge`).
+  - `sentence-transformers` en extra optionnel `[embeddings]` (torch ~1 Go) → CI sans torch.
+  - Commentaires enrichis sur `orders` / `order_items` (dictionnaire de données : « source of all revenue… »).
 
 ### Décisions
 - **Modèle : `claude-haiku-5-5` partout (dev ET éval)** — le moins cher (0,10 $ / 0,50 $ par MTok si prompt ≤ 100K tokens). Configuré dans `.env`, jamais en dur. Effort `low` par défaut.
@@ -38,12 +43,22 @@
 - Introspection : catégoriel = colonne texte avec ≤ 20 valeurs distinctes (seuil configurable). Requêtes construites avec SQLAlchemy Core (identifiants quotés), jamais par f-string. Estimation de lignes via `pg_class` plutôt que `COUNT(*)` (instantané, exact après `ANALYZE`).
 - Effet de bord connu : `categories.description` est détecté comme catégoriel (12 valeurs) — inoffensif, à revoir si le prompt devient trop long.
 
+- **Filtrage du schéma : désactivé par défaut (`SCHEMA_TOP_K` non défini = schéma complet).** Mesure sur 8 questions écrites à la main (EN + FR), base complète :
+
+  | Modèle | k | Rappel EN | Rappel FR | Tables gardées (/7) |
+  |---|---|---|---|---|
+  | all-MiniLM-L6-v2 | 3 | 5/8 | 6/8 | 3,9–4,8 |
+  | all-MiniLM-L6-v2 | 4 | 7/8 | 8/8 | 5,2–5,6 |
+  | paraphrase-multilingual-MiniLM-L12-v2 | 4 | 7/8 | 5/8 | 4,6–5,1 |
+
+  (rappel = toutes les tables nécessaires sont retenues ; mesure après enrichissement des commentaires pour MiniLM-L6.) Avec 7 tables, filtrer économise peu et fait parfois perdre une table indispensable (ex. `orders` pour un filtre d'année : aucun mot de la question ne la désigne). Le retriever reste dans le code et sera comparé au schéma complet en Phase 5 (50 questions). Modèle retenu : `all-MiniLM-L6-v2` (le multilingue n'est pas meilleur, même en français, et 2× plus lent).
+
 ### Reste à faire
-- Phase 1 : 1.3 embedder + filtrage, 1.4 prompt builder, 1.5 ambiguïté.
+- Phase 1 : 1.4 prompt builder, 1.5 ambiguïté.
 - Phases 2 à 6.
 
 ### Prochaine étape
-- Committer l'étape 1.2, puis étape 1.3 (embedder local + filtrage du schéma par similarité + expansion FK).
+- Committer l'étape 1.3, puis étape 1.4 : prompt builder. **Écrire d'abord le template d'instructions.**
 
 ### Blocages
 - ~~Docker absent~~ → résolu (2026-11-13) : Docker Desktop 29.9 + WSL 2 installés, PostgreSQL 16 lancé via compose, seed complet chargé en ~24 s, test d'intégration vert. Pour reprendre : lancer Docker Desktop puis `docker compose up -d db` (les données persistent dans le volume `pgdata`).
