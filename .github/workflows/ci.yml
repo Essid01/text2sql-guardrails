@@ -39,6 +39,7 @@ jobs:
           --health-interval 5s --health-timeout 3s --health-retries 10
     env:
       DATABASE_URL: postgresql+psycopg://text2sql:text2sql@localhost:5432/retail
+      READONLY_DATABASE_URL: postgresql+psycopg://text2sql_reader:ci-reader@localhost:5432/retail
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

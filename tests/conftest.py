@@ -57,3 +57,21 @@ def seeded_db(database_url: str, small_dataset: dict[str, Table]) -> str:
     """Test database loaded once per session with the small dataset."""
     load(database_url, small_dataset)
     return database_url
+
+
+@pytest.fixture(scope="session")
+def readonly_url(seeded_db: str) -> str:
+    """Read-only role URL on the test database, role created like the seed script does.
+
+    Roles are cluster-wide: reuse the configured reader credentials so the tests never
+    change the password used by the main database.
+    """
+    from text2sql.db.roles import setup_readonly_role
+
+    configured = get_settings().readonly_database_url or (
+        "postgresql+psycopg://text2sql_reader:reader-local-dev@localhost:5432/retail"
+    )
+    url = make_url(configured).set(database=make_url(seeded_db).database)
+    rendered = url.render_as_string(hide_password=False)
+    setup_readonly_role(seeded_db, rendered)
+    return rendered

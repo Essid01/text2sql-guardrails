@@ -29,6 +29,9 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql+psycopg://text2sql:text2sql@localhost:5432/retail"
+    # Read-only role used to EXECUTE generated SQL (created by the seed script).
+    readonly_database_url: str | None = None
+    query_timeout_ms: int = Field(default=5000, gt=0)
 
     # Schema retrieval. None = send the full schema (measured better on our 7 tables).
     schema_top_k: int | None = Field(default=None, gt=0)

@@ -21,9 +21,10 @@ from typing import Any
 import psycopg
 from faker import Faker
 from psycopg import sql
-from sqlalchemy.engine import make_url
 
 from text2sql.config import get_settings
+from text2sql.db.engine import conninfo as _conninfo
+from text2sql.db.roles import setup_readonly_role
 
 logger = logging.getLogger(__name__)
 
@@ -347,11 +348,6 @@ def generate(config: SeedConfig) -> dict[str, Table]:
     return tables
 
 
-def _conninfo(database_url: str) -> str:
-    """Convert a SQLAlchemy URL (postgresql+psycopg://...) to a libpq conninfo string."""
-    return make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
-
-
 def load(database_url: str, tables: dict[str, Table]) -> None:
     """(Re)create the schema and bulk-load all tables with COPY, in one transaction."""
     schema_sql = resources.files("text2sql.db").joinpath("schema.sql").read_text("utf-8")
@@ -398,6 +394,10 @@ def main() -> None:
 
     tables = generate(config)
     load(settings.database_url, tables)
+    if settings.readonly_database_url:
+        setup_readonly_role(settings.database_url, settings.readonly_database_url)
+    else:
+        logger.warning("READONLY_DATABASE_URL not set: read-only role not created")
     logger.info("seed complete: %s", {t.name: len(t.rows) for t in tables.values()})
 
 
