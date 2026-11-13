@@ -22,7 +22,10 @@ write the business question it answers, as a user would ask it.
 Describe what the query actually does, not what someone probably wanted: include every
 filter (statuses, date range), the exact metric (for example net revenue after discount
 vs gross revenue), the grouping level, the ordering direction and any row limit. If the
-query looks wrong or odd, still describe it literally."""
+query looks wrong or odd, still describe it literally.
+
+Mention a date range only if the query filters on dates. Do not mention the period the
+data covers when the query has no date filter: that is not a filter."""
 
 JUDGE_SYSTEM = """\
 You check whether a SQL query answers a user's question. You get the user's question (A)
@@ -35,7 +38,8 @@ filter.
 
 Do not count as a mismatch: wording differences, or B being more precise than A in a way
 that follows this database's conventions (sales and revenue count only 'completed'
-orders; amounts in EUR; dates are order dates)."""
+orders; amounts in EUR; dates are order dates). The data only covers 2024-2025, so a
+mention of that coverage period is not an extra filter."""
 
 
 class BackTranslation(BaseModel):
