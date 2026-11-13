@@ -160,6 +160,20 @@ def _check_tables(tree: exp.Expression, config: GuardrailConfig) -> list[Violati
     return _block("unknown_table", f"tables not in the schema: {', '.join(sorted(unknown))}")
 
 
+def referenced_tables(sql: str) -> set[str]:
+    """Real tables used by `sql` (CTE names and table functions excluded); empty if unparsable."""
+    try:
+        tree = sqlglot.parse_one(sql, read=DIALECT)
+    except (ParseError, TokenError):
+        return set()
+    cte_names = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
+    return {
+        t.name.lower()
+        for t in tree.find_all(exp.Table)
+        if not isinstance(t.this, exp.Func) and t.name.lower() not in cte_names
+    }
+
+
 def _select_depth(node: exp.Expression) -> int:
     """Number of SELECTs strictly enclosing `node`."""
     depth, parent = 0, node.parent
