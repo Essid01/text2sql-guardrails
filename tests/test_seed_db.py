@@ -3,17 +3,14 @@
 import psycopg
 import pytest
 
-from text2sql.db.seed import SeedConfig, _conninfo, generate, load
+from text2sql.db.seed import Table, _conninfo
 
 pytestmark = pytest.mark.integration
 
 
-def test_load_small_dataset(database_url: str) -> None:
-    tables = generate(SeedConfig.small())
-    load(database_url, tables)
-
-    with psycopg.connect(_conninfo(database_url)) as conn:
-        for table in tables.values():
+def test_load_small_dataset(seeded_db: str, small_dataset: dict[str, Table]) -> None:
+    with psycopg.connect(_conninfo(seeded_db)) as conn:
+        for table in small_dataset.values():
             (count,) = conn.execute(f"SELECT COUNT(*) FROM {table.name}").fetchone()  # noqa: S608
             assert count == len(table.rows), table.name
 
@@ -21,7 +18,7 @@ def test_load_small_dataset(database_url: str) -> None:
         (next_id,) = conn.execute(
             "INSERT INTO categories (name) VALUES ('__test__') RETURNING category_id"
         ).fetchone()
-        assert next_id == len(tables["categories"].rows) + 1
+        assert next_id == len(small_dataset["categories"].rows) + 1
         conn.rollback()
 
         # Column comments are in place for introspection.
