@@ -23,6 +23,7 @@ htmlcov/
 .cache/
 *.sqlite
 reports/
+logs/
 
 # IDE / OS
 .vscode/

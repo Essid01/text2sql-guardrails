@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+    audit_log_path: str = "logs/audit.jsonl"
 
     def require_llm(self) -> tuple[str, str]:
         """Return (api_key, model) or raise a clear error if the LLM is not configured."""

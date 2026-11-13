@@ -2,7 +2,7 @@
 
 ## État actuel — 2026-11-13
 
-**Phase en cours :** Phase 2 — étape 2.1 (client LLM + cache) codée, en attente de commit. Phase 1 commitée (`e20db0d`, `25e4ce4`).
+**Phase en cours :** Phase 2 **terminée** → relecture avant la Phase 3 (détection d'hallucinations).
 
 ### Fait
 - Phase 0 : squelette du dépôt, config typée, CI (commit `5be3fc3`).
@@ -38,6 +38,13 @@
   - `llm/cache.py` : `CachedLLMClient` (SQLite, clé = hash modèle + paramètres + prompts + schéma de sortie). Un hit coûte 0 et garde les tokens d'origine.
   - `llm/factory.py` : client configuré depuis `.env`.
   - Tests : 10 unitaires (SDK simulé) + 1 test réel `-m llm`.
+- Étape 2.2 : `generation.py` — `SQLGeneration` (sql | clarification | refusal, validateurs de cohérence, descriptions de champs = instructions) + `SQLGenerator`.
+- Étape 2.3 : `guardrails/sql_guard.py` — AST sqlglot : 1 seule instruction, racine SELECT (liste autorisée), écritures/verrous/SELECT INTO n'importe où dans l'arbre (CTE incluses), fonctions dangereuses, tables hors schéma (catalogues système inclus), profondeur ≤ 3, longueur max, LIMIT forcé/plafonné, SQL régénéré sans commentaires. 79 tests (attaques → règle attendue, faux positifs, LIMIT).
+- Étape 2.4 : `db/roles.py` — rôle `text2sql_reader` (SELECT seul, transactions read-only par défaut, statement_timeout 5 s), recréé par le seed. Tests d'intégration qui contournent les guardrails : la base refuse seule écritures, DDL, accès fichiers, séquences.
+- Étape 2.5 : `execution.py` — `QueryExecutor` : transaction read-only toujours annulée, timeout local, `EXPLAIN` d'abord (refus si coût > 100 000), détection de troncature, erreurs typées.
+- Étape 2.6 : `pipeline.py` + `audit.py` + `ask.py` — pipeline glossaire → LLM → guardrails → exécution, 5 statuts (`executed`, `clarification`, `refused`, `blocked`, `error`), audit JSONL (`logs/audit.jsonl`), CLI `python -m text2sql.ask "question"`.
+- Essai réel (Haiku 5.5, base complète) : 6 questions, 0,002 $ au total ; ~0,0007 $ et ~2 s par question nouvelle (dont ~100 ms SQL) ; cache et glossaire à 0 $.
+- CI GitHub verte (lint + unitaires, intégration PostgreSQL).
 
 ### Décisions
 - **Modèle : `claude-haiku-5-5` partout (dev ET éval)** — le moins cher (0,10 $ / 0,50 $ par MTok si prompt ≤ 100K tokens). Configuré dans `.env`, jamais en dur. Effort `low` par défaut.
@@ -78,11 +85,16 @@
 - SDK `anthropic` 2.8 importé paresseusement (son import prend plusieurs secondes sur cette machine).
 - Tests `llm` exécutés uniquement avec `pytest -m llm` (hook dans `conftest.py`) : un `-m` dans `addopts` est remplacé par tout `-m` passé en ligne de commande.
 
+- Seuil `MAX_QUERY_COST=100000` choisi sur mesure : requêtes analytiques normales 300–4 000 (< 70 ms) ; produits cartésiens / auto-jointures > 700 000 (timeout).
+- Chaque appel LLM ≈ 5 300 tokens d'entrée (le schéma de sortie est ajouté par l'API au prompt d'environ 2 300 tokens).
+- Le coût estimé trop élevé est classé `blocked` (règle `too_expensive`) ; le timeout et les erreurs SQL sont classés `error` (signal utile pour la Phase 3 : colonne hallucinée → erreur explicite).
+
 ### Reste à faire
 - Phases 2 à 6.
 
 ### Prochaine étape
-- Commit 2.1, puis 2.2 (modèle de sortie `SQLGeneration`), 2.3 guardrails (tests d'abord, sqlglot), 2.4 rôle read-only, 2.5 exécution + EXPLAIN + audit, 2.6 pipeline `python -m text2sql.ask`.
+- Plan détaillé de la Phase 3 : back-traduction, contrôles de cohérence des résultats, double génération indépendante, score de confiance composite.
+- À faire en Phase 6 : mettre à jour `actions/checkout` et `actions/setup-python` (avertissement Node 20 déprécié dans la CI).
 
 ### Blocages
 - ~~Docker absent~~ → résolu (2026-11-13) : Docker Desktop 29.9 + WSL 2 installés, PostgreSQL 16 lancé via compose, seed complet chargé en ~24 s, test d'intégration vert. Pour reprendre : lancer Docker Desktop puis `docker compose up -d db` (les données persistent dans le volume `pgdata`).
