@@ -6,7 +6,7 @@
 
 ### Pour reprendre demain
 1. Lancer Docker Desktop, puis `docker compose up -d db` (les données sont conservées dans le volume `pgdata`).
-2. Activer l'environnement : `.venv\Scriptsctivate`.
+2. Activer l'environnement : `.venv\Scripts\activate`.
 3. Vérifier : `pytest -m "not embeddings"` (≈ 5 s, 234 tests) ; `pytest -m llm` pour les 2 tests payants (≈ 0,001 $).
 4. Essayer : `python -m text2sql.ask --no-embedder "Top 3 product categories by net revenue in 2025"`.
 
