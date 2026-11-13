@@ -1,11 +1,17 @@
 # Progress log
 
-## État actuel — 2026-11-13
+## État actuel — 2026-11-13 (fin de journée)
 
-**Phase en cours :** Phase 2 **terminée** → relecture avant la Phase 3 (détection d'hallucinations).
+**Phases 1, 2 et 3 terminées.** Prochaine session : **Phase 4 (API FastAPI + interface Streamlit + feedback)**, en commençant par le plan détaillé.
+
+### Pour reprendre demain
+1. Lancer Docker Desktop, puis `docker compose up -d db` (les données sont conservées dans le volume `pgdata`).
+2. Activer l'environnement : `.venv\Scriptsctivate`.
+3. Vérifier : `pytest -m "not embeddings"` (≈ 5 s, 234 tests) ; `pytest -m llm` pour les 2 tests payants (≈ 0,001 $).
+4. Essayer : `python -m text2sql.ask --no-embedder "Top 3 product categories by net revenue in 2025"`.
 
 ### Fait
-- Phase 0 : squelette du dépôt, config typée, CI (commit `5be3fc3`).
+- Phase 0 : squelette du dépôt, config typée, CI.
 - Étape 1.1 :
   - `src/text2sql/db/schema.sql` : 7 tables (categories, products, stores, customers, orders, order_items, inventory), PK/FK, CHECK, index sur FK, `COMMENT ON` destinés au LLM.
   - `src/text2sql/db/seed.py` : génération déterministe (seed 42) en Python pur + chargement par `COPY` + `setval` des séquences + `ANALYZE`.
@@ -45,15 +51,20 @@
 - Étape 2.6 : `pipeline.py` + `audit.py` + `ask.py` — pipeline glossaire → LLM → guardrails → exécution, 5 statuts (`executed`, `clarification`, `refused`, `blocked`, `error`), audit JSONL (`logs/audit.jsonl`), CLI `python -m text2sql.ask "question"`.
 - Essai réel (Haiku 5.5, base complète) : 6 questions, 0,002 $ au total ; ~0,0007 $ et ~2 s par question nouvelle (dont ~100 ms SQL) ; cache et glossaire à 0 $.
 - CI GitHub verte (lint + unitaires, intégration PostgreSQL).
+- Étape 3.1 : `verification/sanity.py` — contrôles gratuits : colonne entièrement NULL, valeurs négatives (montants, quantités), dates hors période, « top N » qui renvoie plus de N lignes, résultat vide/tronqué, tables déclarées par le LLM ≠ tables du SQL, colonnes déclarées inexistantes.
+- Étape 3.2 : `verification/backtranslation.py` — traducteur **aveugle** (voit le SQL + schéma des tables utilisées, jamais la question) puis **juge** (voit les deux questions, jamais le SQL ; liste les différences avant de conclure). ≈ 0,0003 $ par vérification.
+- Étape 3.3 : `verification/consensus.py` — seconde génération indépendante (zero-shot + consigne différente : pas de cache hit, autre approche), exécutée sous les mêmes guardrails ; résultats comparés comme multiensembles de lignes normalisées, avec repli numérique (colonne de libellé en plus).
+- Étape 3.4 : `verification/confidence.py` + `verifier.py` — score composite pondéré (alignement 0,35 ; accord 0,25 ; cohérence 0,20 ; couverture du schéma 0,10 ; confiance déclarée du LLM 0,10), signaux indisponibles exclus, drapeau « hallucination probable » sous 0,6, raisons lisibles. Branché dans le pipeline, l'audit et `ask`.
+- Essai réel Phase 3 (5 questions, tous contrôles) : 0,008 $ au total (≈ 0,0016 $/question, ≈ 5–13 s). Ambiguïté réelle détectée par la double génération (« part des commandes en ligne » : tous statuts vs complétées → résultats différents). Un faux positif du juge trouvé et corrigé (voir Décisions).
+- Tests : 234 (hors embeddings), tous verts.
 
 ### Décisions
 - **Modèle : `claude-haiku-5-5` partout (dev ET éval)** — le moins cher (0,10 $ / 0,50 $ par MTok si prompt ≤ 100K tokens). Configuré dans `.env`, jamais en dur. Effort `low` par défaut.
 - Contraintes Haiku 5.5 à respecter en Phase 2 (client LLM) :
-  - **Pas de `temperature` / `top_p` / `top_k`** (400) → vérifier qu'`instructor` n'en envoie pas ; le déterminisme vient du cache + structured outputs.
+  - **Pas de `temperature` / `top_p` / `top_k`** (400) → jamais envoyés (testé) ; le déterminisme vient du cache + structured outputs.
   - **Pas de prefill** assistant (400) → le format JSON passe par structured outputs / tool.
   - **Thinking adaptatif actif par défaut** → lire les blocs par `type`, jamais `content[0]` ; les tokens de thinking comptent dans `max_tokens` (4096 de marge).
   - Ne pas envoyer `budget_tokens` (400). Levier de coût = `output_config.effort`.
-  - `tool_choice` forcé accepté mais saute le thinking → acceptable pour instructor (mode tools) ; on comparera avec le mode JSON.
   - Pas de fallback serveur sur refus → gérer `stop_reason == "refusal"` explicitement.
   - Garder les prompts < 100K tokens (sinon tarif ×5) — largement le cas ici.
 - Limite assumée : l'éval avec Haiku donnera des chiffres plus bas qu'avec un gros modèle ; à documenter dans le README (« Limitations »).
@@ -89,11 +100,20 @@
 - Chaque appel LLM ≈ 5 300 tokens d'entrée (le schéma de sortie est ajouté par l'API au prompt d'environ 2 300 tokens).
 - Le coût estimé trop élevé est classé `blocked` (règle `too_expensive`) ; le timeout et les erreurs SQL sont classés `error` (signal utile pour la Phase 3 : colonne hallucinée → erreur explicite).
 
+- **Détection d'hallucinations : tous les contrôles actifs par défaut** ; chacun désactivable (`VERIFY_BACKTRANSLATION`, `VERIFY_MULTI_QUERY`). Comparaison de la back-traduction par **juge LLM** plutôt que similarité d'embeddings (« CA 2024 » et « CA 2025 » sont presque identiques en embeddings).
+- Vérifié sur cas construits : SQL correct → 1,0 ; mauvaise année → 0,0 ; brut au lieu de net → 0,0.
+- Faux positif corrigé : le traducteur décrivait « toutes périodes » avec les dates de couverture lues dans les commentaires, le juge y voyait un filtre en trop (SQL correct noté 0,0). Les deux prompts précisent maintenant que la période couverte n'est pas un filtre ; re-vérifié sans régression.
+- La seconde génération doit avoir un prompt différent, sinon le cache renvoie la même réponse et l'accord est garanti par construction.
+- Limite connue de la comparaison des résultats : un libellé dans une requête et un identifiant numérique dans l'autre → désaccord.
+- Poids du score composite = point de départ documenté, **à calibrer en Phase 5** sur le jeu d'évaluation (pas d'ajustement à la main sur quelques exemples).
+
 ### Reste à faire
-- Phases 2 à 6.
+- Phase 4 : API FastAPI (`POST /v1/query`, `GET /v1/schema`, `GET /v1/history`), interface Streamlit (SQL éditable, résultats, détail du score, historique), feedback correct/incorrect stocké en base (schéma `app`, invisible pour le rôle lecteur).
+- Phase 5 : jeu de 50+ questions écrites à la main, métriques (exactitude d'exécution, exact match, détection d'hallucinations, guardrails), `make eval`, coût par question, calibration des poids.
+- Phase 6 : README avec les vrais chiffres, docker-compose complet, limitations.
 
 ### Prochaine étape
-- Plan détaillé de la Phase 3 : back-traduction, contrôles de cohérence des résultats, double génération indépendante, score de confiance composite.
+- Écrire le plan détaillé de la Phase 4.
 - À faire en Phase 6 : mettre à jour `actions/checkout` et `actions/setup-python` (avertissement Node 20 déprécié dans la CI).
 
 ### Blocages
