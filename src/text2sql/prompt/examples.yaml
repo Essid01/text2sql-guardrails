@@ -1,0 +1,80 @@
+# Few-shot examples: hand-written question -> reference SQL pairs.
+# Each SQL is executed by an integration test, so it must stay valid.
+# Do NOT reuse these questions in the evaluation set (it would inflate scores).
+
+- id: cancelled_orders_2024
+  question: How many orders were cancelled in 2024?
+  sql: |
+    SELECT COUNT(*) AS cancelled_orders
+    FROM orders o
+    WHERE o.status = 'cancelled'
+      AND o.order_date >= '2024-01-01'
+      AND o.order_date < '2025-01-01';
+
+- id: net_revenue_by_store_type_2025
+  question: What was the net revenue per store type in 2025?
+  sql: |
+    SELECT s.store_type,
+           ROUND(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 2) AS net_revenue
+    FROM orders o
+    JOIN order_items oi ON oi.order_id = o.order_id
+    JOIN stores s ON s.store_id = o.store_id
+    WHERE o.status = 'completed'
+      AND o.order_date >= '2025-01-01'
+      AND o.order_date < '2026-01-01'
+    GROUP BY s.store_type
+    ORDER BY net_revenue DESC;
+
+- id: top_products_units
+  question: What are the 5 best-selling products by units sold?
+  sql: |
+    SELECT p.name AS product_name,
+           p.brand,
+           SUM(oi.quantity) AS units_sold
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    JOIN products p ON p.product_id = oi.product_id
+    WHERE o.status = 'completed'
+    GROUP BY p.product_id, p.name, p.brand
+    ORDER BY units_sold DESC
+    LIMIT 5;
+
+- id: stores_to_restock
+  question: Which stores have more than 80 products below their reorder level?
+  sql: |
+    SELECT s.name AS store_name,
+           s.city,
+           COUNT(*) AS products_to_reorder
+    FROM inventory i
+    JOIN stores s ON s.store_id = i.store_id
+    WHERE i.quantity_on_hand < i.reorder_level
+    GROUP BY s.store_id, s.name, s.city
+    HAVING COUNT(*) > 80
+    ORDER BY products_to_reorder DESC;
+
+- id: electronics_buyers_by_region
+  question: How many distinct customers bought Electronics, per customer region?
+  sql: |
+    SELECT c.region,
+           COUNT(DISTINCT c.customer_id) AS customers
+    FROM customers c
+    JOIN orders o ON o.customer_id = c.customer_id
+    JOIN order_items oi ON oi.order_id = o.order_id
+    JOIN products p ON p.product_id = oi.product_id
+    JOIN categories cat ON cat.category_id = p.category_id
+    WHERE cat.name = 'Electronics'
+      AND o.status = 'completed'
+    GROUP BY c.region
+    ORDER BY customers DESC;
+
+- id: monthly_completed_orders_2025
+  question: Show the number of completed orders per month in 2025.
+  sql: |
+    SELECT DATE_TRUNC('month', o.order_date)::date AS month,
+           COUNT(*) AS completed_orders
+    FROM orders o
+    WHERE o.status = 'completed'
+      AND o.order_date >= '2025-01-01'
+      AND o.order_date < '2026-01-01'
+    GROUP BY 1
+    ORDER BY 1;
