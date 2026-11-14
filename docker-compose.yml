@@ -1,3 +1,22 @@
+# Whole stack in one command:  docker compose up -d --build
+#   UI   http://localhost:8501
+#   API  http://localhost:8000/docs   (set API_PORT / UI_PORT in .env to change host ports)
+# Needs ANTHROPIC_API_KEY in .env. The credentials below are local demo defaults:
+# override POSTGRES_PASSWORD and READER_PASSWORD in .env anywhere but a laptop.
+
+x-app-env: &app-env
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-claude-haiku-5-5}
+  LLM_EFFORT: ${LLM_EFFORT:-low}
+  # USD per million tokens, for cost reporting only (Haiku 5.5, see .env.example).
+  LLM_PRICE_INPUT_PER_MTOK: ${LLM_PRICE_INPUT_PER_MTOK:-0.10}
+  LLM_PRICE_OUTPUT_PER_MTOK: ${LLM_PRICE_OUTPUT_PER_MTOK:-0.50}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-text2sql}:${POSTGRES_PASSWORD:-text2sql}@db:5432/${POSTGRES_DB:-retail}
+  READONLY_DATABASE_URL: postgresql+psycopg://text2sql_reader:${READER_PASSWORD:-change-me-reader}@db:5432/${POSTGRES_DB:-retail}
+  VERIFY_BACKTRANSLATION: ${VERIFY_BACKTRANSLATION:-true}
+  VERIFY_MULTI_QUERY: ${VERIFY_MULTI_QUERY:-true}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
 services:
   db:
     image: postgres:16-alpine
@@ -16,5 +35,49 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot job: demo data (only if the database is empty), read-only role, app schema.
+  seed:
+    build: .
+    image: text2sql-guardrails
+    command: ["python", "-m", "text2sql.db.seed", "--if-empty"]
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: text2sql-guardrails
+    environment: *app-env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - llm-cache:/app/.cache
+      - audit-logs:/app/logs
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  ui:
+    image: text2sql-guardrails
+    command: ["streamlit", "run", "src/text2sql/ui/app.py", "--server.address=0.0.0.0",
+              "--server.port=8501", "--server.headless=true"]
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "${UI_PORT:-8501}:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  llm-cache:
+  audit-logs:

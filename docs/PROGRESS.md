@@ -2,9 +2,10 @@
 
 ## État actuel — 2026-11-14
 
-**Phases 1 à 5 terminées.** Prochaine session : **Phase 6 (README, docker-compose complet, limitations)**, en commençant par le plan détaillé.
+**Projet terminé : phases 1 à 6.** Pistes possibles ensuite : voir « Pistes » plus bas.
 
 ### Pour reprendre
+0. Tout en une commande : `docker compose up -d --build` → UI http://localhost:8501, API http://localhost:8010/docs sur cette machine (`API_PORT=8010` dans `.env`).
 1. Lancer Docker Desktop, puis `docker compose up -d db` (les données sont conservées dans le volume `pgdata`).
 2. Activer l'environnement : `.venv\Scripts\activate` (première fois après ce commit : `pip install -e ".[dev,ui]"`).
 3. Vérifier : `pytest -m "not embeddings"` (≈ 15 s, 352 tests) ; `pytest -m llm` pour les 2 tests payants (≈ 0,001 $).
@@ -74,6 +75,9 @@
 - Étape 5.3 : résultats (détail dans `docs/EVAL_RESULTS.md`) — run 2 : **exactitude d'exécution 100 % (38/38)**, **requêtes fausses signalées 95 % (19/20)**, fausses alertes 3,4 % (2/58), requêtes dangereuses refusées/bloquées 7/7, **0 écriture en base**, clarifications 5/5, questions hors périmètre non répondues 5/5, **≈ 0,0012 $ par question**, latence p50 7,1 s / p95 11,1 s (run 1, tous contrôles). Run 1 : 97,4 % (37/38) ; le seul échec (t04) était une réponse correcte mal notée (année étiquetée par une date), vérifiée à la main → forme alternative ajoutée.
 - Étape 5.4 : calibration — AUC par signal : alignement 0,94, accord 0,93, confiance déclarée 0,67, cohérence et couverture 0,5 (jamais déclenchés sur ce jeu). Seuil 0,6 : 95 % / 3,4 % ; 0,8 : 100 % de détection mais 14 % de fausses alertes. **Poids et seuil inchangés** (voir Décisions).
 - Tests : 352 (hors embeddings), tous verts.
+- Étape 6.1 : `Dockerfile` (python 3.12-slim, utilisateur non-root, sans torch) + `docker-compose.yml` complet : `db`, `seed` (job unique, `--if-empty` : ne recharge jamais des données existantes, met à jour le rôle lecteur et le schéma `app`), `api` (healthcheck), `ui`. Volumes pour les données, le cache LLM et l'audit. Vérifié en local : question réelle → 197 clients en Normandie, 0,0013 $ ; `DROP` bloqué ; UI en HTTP 200.
+- Étape 6.2 : CI — actions `checkout` et `setup-python` passées en v7 (Node 24, vérifié dans leur `action.yml`) ; nouveau job `docker` qui démarre toute la stack et vérifie l'API de bout en bout sans appel LLM (SQL utilisateur exécuté, `DROP` et lecture de `app.query_history` bloqués) ; reseed `--if-empty` testé.
+- Étape 6.3 : README final — chiffres réels en tête (avec l'historique 97,4 % → 100 %), architecture Mermaid, défense en profondeur, détection d'hallucinations, démarrage en une commande, API, choix de conception, limitations. Fichier `LICENSE` (MIT).
 
 ### Décisions
 - **Modèle : `claude-haiku-5-5` partout (dev ET éval)** — le moins cher (0,10 $ / 0,50 $ par MTok si prompt ≤ 100K tokens). Configuré dans `.env`, jamais en dur. Effort `low` par défaut.
@@ -133,12 +137,13 @@
 - Une référence ajoutée après coup (t04) est documentée dans le fichier et dans `docs/EVAL_RESULTS.md` (historique des runs), jamais en silence.
 - Limites assumées (à documenter en Phase 6) : benchmark écrit par l'auteur du système sur 7 tables synthétiques (plus facile que Spider/BIRD) ; pas d'authentification ni de limitation de débit sur l'API (démo locale) ; l'historique est partagé par tous les utilisateurs.
 
-### Reste à faire
-- Phase 6 : README qui commence par les chiffres de `docs/EVAL_RESULTS.md`, schéma d'architecture Mermaid, docker-compose complet (db + api + ui en une commande), limitations, mise à jour des actions GitHub (avertissement Node 20).
+### Pistes (hors périmètre initial)
+- Agrandir le benchmark (questions écrites par d'autres personnes, schéma plus large) avant toute calibration des poids.
+- Authentification et limitation de débit sur l'API ; historique par utilisateur.
+- Image Docker optionnelle avec embeddings.
 
 ### Prochaine étape
-- Écrire le plan détaillé de la Phase 6.
-- Après la Phase 6 : rédiger le post LinkedIn avec les chiffres réels ; rendre le dépôt public avant de partager le lien.
+- Rédiger le post LinkedIn avec les chiffres réels ; rendre le dépôt public avant de partager le lien.
 
 ### Blocages
 - ~~Docker absent~~ → résolu (2026-11-13) : Docker Desktop 29.9 + WSL 2 installés, PostgreSQL 16 lancé via compose, seed complet chargé en ~24 s, test d'intégration vert. Pour reprendre : lancer Docker Desktop puis `docker compose up -d db` (les données persistent dans le volume `pgdata`).

@@ -381,10 +381,24 @@ def load(database_url: str, tables: dict[str, Table]) -> None:
         conn.execute("ANALYZE")
 
 
+def _has_data(database_url: str) -> bool:
+    with psycopg.connect(_conninfo(database_url)) as conn:
+        exists = conn.execute("SELECT to_regclass('public.orders')").fetchone()
+        if not exists or exists[0] is None:
+            return False
+        row = conn.execute("SELECT EXISTS (SELECT 1 FROM orders)").fetchone()
+        return bool(row and row[0])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed the demo retail database.")
     parser.add_argument("--small", action="store_true", help="generate a tiny dataset")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--if-empty",
+        action="store_true",
+        help="load data only if the database has no orders yet (docker compose)",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -392,8 +406,12 @@ def main() -> None:
     base = SeedConfig.small() if args.small else SeedConfig()
     config = SeedConfig(**{**base.__dict__, "seed": args.seed})
 
-    tables = generate(config)
-    load(settings.database_url, tables)
+    if args.if_empty and _has_data(settings.database_url):
+        logger.info("data already loaded: skipping generation (roles and app schema refreshed)")
+    else:
+        tables = generate(config)
+        load(settings.database_url, tables)
+        logger.info("seed complete: %s", {t.name: len(t.rows) for t in tables.values()})
     from text2sql.history import ensure_app_schema  # history/feedback tables, kept on reseed
 
     ensure_app_schema(settings.database_url)
@@ -401,7 +419,6 @@ def main() -> None:
         setup_readonly_role(settings.database_url, settings.readonly_database_url)
     else:
         logger.warning("READONLY_DATABASE_URL not set: read-only role not created")
-    logger.info("seed complete: %s", {t.name: len(t.rows) for t in tables.values()})
 
 
 if __name__ == "__main__":

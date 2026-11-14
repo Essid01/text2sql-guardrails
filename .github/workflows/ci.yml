@@ -9,8 +9,8 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -41,8 +41,8 @@ jobs:
       DATABASE_URL: postgresql+psycopg://text2sql:text2sql@localhost:5432/retail
       READONLY_DATABASE_URL: postgresql+psycopg://text2sql_reader:ci-reader@localhost:5432/retail
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -52,3 +52,32 @@ jobs:
         run: pytest -m "integration and not llm"
       - name: Full seed smoke test
         run: python -m text2sql.db.seed
+      - name: Seed again with --if-empty (must keep the data)
+        run: python -m text2sql.db.seed --if-empty
+
+  docker:
+    # Whole stack as a user would start it. No real LLM call: the checks send
+    # user-written SQL, which skips generation but goes through guardrails + executor.
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ci-placeholder-never-called
+      READER_PASSWORD: ci-reader
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and start the stack
+        run: docker compose up -d --build --wait api
+      - name: End-to-end checks through the API
+        run: |
+          set -euo pipefail
+          q() { curl -sf -X POST localhost:8000/v1/query -H 'Content-Type: application/json' -d "$1"; }
+          q '{"question":"count","sql":"SELECT COUNT(*) AS n FROM stores"}' | grep -q '"status":"executed"'
+          q '{"question":"x","sql":"DROP TABLE orders"}' | grep -q '"status":"blocked"'
+          q '{"question":"x","sql":"SELECT * FROM app.query_history"}' | grep -q '"status":"blocked"'
+          curl -sf localhost:8000/v1/schema | grep -q '"order_items"'
+          curl -sf localhost:8000/v1/history | grep -q '"query_id"'
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Stop
+        if: always()
+        run: docker compose down -v

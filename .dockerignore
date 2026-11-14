@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+.env
+.cache
+.pytest_cache
+.ruff_cache
+**/__pycache__
+logs
+reports
+tests
+docs
+evals/feedback_candidates.yaml
