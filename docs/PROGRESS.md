@@ -1,14 +1,18 @@
 # Progress log
 
-## État actuel — 2026-11-13 (fin de journée)
+## État actuel — 2026-11-14
 
-**Phases 1, 2 et 3 terminées.** Prochaine session : **Phase 4 (API FastAPI + interface Streamlit + feedback)**, en commençant par le plan détaillé.
+**Phases 1 à 4 terminées.** Prochaine session : **Phase 5 (évaluation)**, en commençant par le plan détaillé.
 
-### Pour reprendre demain
+### Pour reprendre
 1. Lancer Docker Desktop, puis `docker compose up -d db` (les données sont conservées dans le volume `pgdata`).
-2. Activer l'environnement : `.venv\Scripts\activate`.
-3. Vérifier : `pytest -m "not embeddings"` (≈ 5 s, 234 tests) ; `pytest -m llm` pour les 2 tests payants (≈ 0,001 $).
-4. Essayer : `python -m text2sql.ask --no-embedder "Top 3 product categories by net revenue in 2025"`.
+2. Activer l'environnement : `.venv\Scripts\activate` (première fois après ce commit : `pip install -e ".[dev,ui]"`).
+3. Vérifier : `pytest -m "not embeddings"` (≈ 9 s, 266 tests) ; `pytest -m llm` pour les 2 tests payants (≈ 0,001 $).
+4. Essayer en ligne de commande : `python -m text2sql.ask --no-embedder "Top 3 product categories by net revenue in 2025"`.
+5. Essayer l'API et l'interface (deux terminaux) :
+   - `uvicorn text2sql.api.app:app --port 8000` → documentation OpenAPI sur http://localhost:8000/docs
+   - `streamlit run src/text2sql/ui/app.py` → http://localhost:8501
+   - Sur cette machine le port 8000 est déjà occupé par un autre programme : utiliser `--port 8010` et `API_URL=http://localhost:8010` dans `.env`.
 
 ### Fait
 - Phase 0 : squelette du dépôt, config typée, CI.
@@ -57,6 +61,13 @@
 - Étape 3.4 : `verification/confidence.py` + `verifier.py` — score composite pondéré (alignement 0,35 ; accord 0,25 ; cohérence 0,20 ; couverture du schéma 0,10 ; confiance déclarée du LLM 0,10), signaux indisponibles exclus, drapeau « hallucination probable » sous 0,6, raisons lisibles. Branché dans le pipeline, l'audit et `ask`.
 - Essai réel Phase 3 (5 questions, tous contrôles) : 0,008 $ au total (≈ 0,0016 $/question, ≈ 5–13 s). Ambiguïté réelle détectée par la double génération (« part des commandes en ligne » : tous statuts vs complétées → résultats différents). Un faux positif du juge trouvé et corrigé (voir Décisions).
 - Tests : 234 (hors embeddings), tous verts.
+- Étape 4.1 : `db/app_schema.sql` + `history.py` — schéma `app` (`query_history`, `feedback`) **sans aucun droit pour le rôle lecteur** (testé : `InsufficientPrivilege`) et rejeté par les guardrails (seul `public` est autorisé). Créé de façon idempotente par le seed et au démarrage de l'API ; le reseed ne touche pas à l'historique. Stores PostgreSQL et mémoire avec le même contrat (mêmes tests sur les deux). Réponse complète stockée en JSONB, lignes plafonnées à 100.
+- Étape 4.2 : `pipeline.run_user_sql` — le SQL modifié à la main passe par les **mêmes** guardrails et le même exécuteur (un humain n'est pas plus digne de confiance que le LLM), sans appel LLM ni vérification d'hallucination (`sql_source = "user"`).
+- Étape 4.3 : `api/app.py` — FastAPI : `POST /v1/query`, `GET /v1/schema`, `GET /v1/history`, `GET /v1/history/{id}`, `PUT /v1/history/{id}/feedback`, `GET /health`. Le résultat métier est dans `status` (HTTP 200) ; 422/404 seulement pour une requête invalide ou un id inconnu. Entrées bornées (question ≤ 1 000 caractères, SQL ≤ 10 000, page ≤ 200).
+- Étape 4.4 : `ui/app.py` + `ui/client.py` — Streamlit : question, boutons de clarification, SQL éditable et ré-exécutable, tableau de résultats, score de confiance détaillé par signal (back-traduction, seconde requête, contrôles), historique dans la barre latérale, schéma, formulaire correct/incorrect. L'UI ne parle qu'à l'API, jamais à la base.
+- Étape 4.5 : `feedback.py` — `python -m text2sql.feedback` exporte les réponses marquées incorrectes dans `evals/feedback_candidates.yaml`, avec `status: to_review` : c'est une file de relecture, pas des données de référence.
+- Essai réel bout en bout (API sur PostgreSQL + Haiku 5.5) : « Top 3 categories by net revenue in 2025 » → SQL correct, confiance 0,995, 4 appels LLM, 0,002 $ ; `DELETE` et `SELECT * FROM app.query_history` envoyés comme SQL utilisateur → bloqués ; retours, historique et export vérifiés ; interface testée sans navigateur (`streamlit.testing.AppTest`). Lignes d'essai supprimées ensuite.
+- Tests : 266 (hors embeddings), tous verts.
 
 ### Décisions
 - **Modèle : `claude-haiku-5-5` partout (dev ET éval)** — le moins cher (0,10 $ / 0,50 $ par MTok si prompt ≤ 100K tokens). Configuré dans `.env`, jamais en dur. Effort `low` par défaut.
@@ -107,13 +118,18 @@
 - Limite connue de la comparaison des résultats : un libellé dans une requête et un identifiant numérique dans l'autre → désaccord.
 - Poids du score composite = point de départ documenté, **à calibrer en Phase 5** sur le jeu d'évaluation (pas d'ajustement à la main sur quelques exemples).
 
+- Historique : un **verdict par réponse** (le dernier remplace le précédent) ; l'audit JSONL est conservé à côté (append-only, fonctionne sans API, survit à un reset de la base).
+- Les réponses incorrectes ne rejoignent **jamais automatiquement** le jeu d'évaluation : la correction d'un utilisateur peut elle-même être fausse ; un humain relit chaque cas et écrit le SQL attendu.
+- Endpoints synchrones (`def`) : le pipeline fait des appels bloquants (LLM, PostgreSQL), FastAPI les exécute dans son pool de threads.
+- Streamlit en extra optionnel `[ui]` (pandas, pyarrow) : l'API et la CI n'en ont pas besoin. FastAPI, uvicorn et httpx dans les dépendances principales.
+- Limites assumées (à documenter en Phase 6) : pas d'authentification ni de limitation de débit sur l'API (démo locale) ; l'historique est partagé par tous les utilisateurs.
+
 ### Reste à faire
-- Phase 4 : API FastAPI (`POST /v1/query`, `GET /v1/schema`, `GET /v1/history`), interface Streamlit (SQL éditable, résultats, détail du score, historique), feedback correct/incorrect stocké en base (schéma `app`, invisible pour le rôle lecteur).
-- Phase 5 : jeu de 50+ questions écrites à la main, métriques (exactitude d'exécution, exact match, détection d'hallucinations, guardrails), `make eval`, coût par question, calibration des poids.
-- Phase 6 : README avec les vrais chiffres, docker-compose complet, limitations.
+- Phase 5 : jeu de 50+ questions écrites à la main (jamais celles de `examples.yaml`), métriques (exactitude d'exécution, exact match, détection d'hallucinations, guardrails), `make eval`, rapport Markdown + JSON, coût par question, calibration des poids du score.
+- Phase 6 : README avec les vrais chiffres, schéma d'architecture Mermaid, docker-compose complet (db + api + ui en une commande), limitations.
 
 ### Prochaine étape
-- Écrire le plan détaillé de la Phase 4.
+- Écrire le plan détaillé de la Phase 5.
 - À faire en Phase 6 : mettre à jour `actions/checkout` et `actions/setup-python` (avertissement Node 20 déprécié dans la CI).
 
 ### Blocages

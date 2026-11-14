@@ -30,3 +30,6 @@ logs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Feedback export: real user questions, reviewed before entering the eval set
+evals/feedback_candidates.yaml
