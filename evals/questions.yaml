@@ -418,6 +418,13 @@
     WHERE o.status = 'completed' AND EXTRACT(MONTH FROM o.order_date) = 12
     GROUP BY 1
   alt_gold_sql:
+    # Year labelled as a date (added after run 1: a correct answer was graded wrong).
+    - |
+      SELECT DATE_TRUNC('year', o.order_date)::date,
+             ROUND(SUM(oi.quantity * oi.unit_price * (1 - oi.discount)), 2)
+      FROM order_items oi JOIN orders o ON o.order_id = oi.order_id
+      WHERE o.status = 'completed' AND EXTRACT(MONTH FROM o.order_date) = 12
+      GROUP BY 1
     - |
       SELECT
         ROUND(SUM(oi.quantity * oi.unit_price * (1 - oi.discount))

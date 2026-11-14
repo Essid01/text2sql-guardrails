@@ -2,16 +2,17 @@
 
 ## État actuel — 2026-11-14
 
-**Phases 1 à 4 terminées.** Prochaine session : **Phase 5 (évaluation)**, en commençant par le plan détaillé.
+**Phases 1 à 5 terminées.** Prochaine session : **Phase 6 (README, docker-compose complet, limitations)**, en commençant par le plan détaillé.
 
 ### Pour reprendre
 1. Lancer Docker Desktop, puis `docker compose up -d db` (les données sont conservées dans le volume `pgdata`).
 2. Activer l'environnement : `.venv\Scripts\activate` (première fois après ce commit : `pip install -e ".[dev,ui]"`).
-3. Vérifier : `pytest -m "not embeddings"` (≈ 9 s, 266 tests) ; `pytest -m llm` pour les 2 tests payants (≈ 0,001 $).
+3. Vérifier : `pytest -m "not embeddings"` (≈ 15 s, 352 tests) ; `pytest -m llm` pour les 2 tests payants (≈ 0,001 $).
 4. Essayer en ligne de commande : `python -m text2sql.ask --no-embedder "Top 3 product categories by net revenue in 2025"`.
 5. Essayer l'API et l'interface (deux terminaux) :
    - `uvicorn text2sql.api.app:app --port 8000` → documentation OpenAPI sur http://localhost:8000/docs
    - `streamlit run src/text2sql/ui/app.py` → http://localhost:8501
+   - Benchmark : `python -m text2sql.eval` (ou `make eval`) → `reports/latest.md` ; relance gratuite grâce au cache.
    - Sur cette machine le port 8000 est déjà occupé par un autre programme : utiliser `--port 8010` et `API_URL=http://localhost:8010` dans `.env`.
 
 ### Fait
@@ -68,6 +69,11 @@
 - Étape 4.5 : `feedback.py` — `python -m text2sql.feedback` exporte les réponses marquées incorrectes dans `evals/feedback_candidates.yaml`, avec `status: to_review` : c'est une file de relecture, pas des données de référence.
 - Essai réel bout en bout (API sur PostgreSQL + Haiku 5.5) : « Top 3 categories by net revenue in 2025 » → SQL correct, confiance 0,995, 4 appels LLM, 0,002 $ ; `DELETE` et `SELECT * FROM app.query_history` envoyés comme SQL utilisateur → bloqués ; retours, historique et export vérifiés ; interface testée sans navigateur (`streamlit.testing.AppTest`). Lignes d'essai supprimées ensuite.
 - Tests : 266 (hors embeddings), tous verts.
+- Étape 5.1 : `evals/questions.yaml` — 55 questions écrites à la main (45 EN, 10 FR) : 38 avec SQL de référence (simples, jointures/agrégats, dates, classements), 5 ambiguës, 5 hors périmètre, 7 malveillantes ; 20 requêtes fausses typiques (`bad_sql`). Chaque référence est testée en CI (guardrails + exécution).
+- Étape 5.2 : `src/text2sql/eval/` — comparaison des résultats (ordre ignoré, colonnes en plus acceptées, tolérance d'arrondi, entiers exacts, formes alternatives), runner sur le vrai pipeline, requêtes fausses injectées vérifiées à côté de leur référence, compteurs d'écriture PostgreSQL avant/après, rapport Markdown + JSON, `make eval`.
+- Étape 5.3 : résultats (détail dans `docs/EVAL_RESULTS.md`) — run 2 : **exactitude d'exécution 100 % (38/38)**, **requêtes fausses signalées 95 % (19/20)**, fausses alertes 3,4 % (2/58), requêtes dangereuses refusées/bloquées 7/7, **0 écriture en base**, clarifications 5/5, questions hors périmètre non répondues 5/5, **≈ 0,0012 $ par question**, latence p50 7,1 s / p95 11,1 s (run 1, tous contrôles). Run 1 : 97,4 % (37/38) ; le seul échec (t04) était une réponse correcte mal notée (année étiquetée par une date), vérifiée à la main → forme alternative ajoutée.
+- Étape 5.4 : calibration — AUC par signal : alignement 0,94, accord 0,93, confiance déclarée 0,67, cohérence et couverture 0,5 (jamais déclenchés sur ce jeu). Seuil 0,6 : 95 % / 3,4 % ; 0,8 : 100 % de détection mais 14 % de fausses alertes. **Poids et seuil inchangés** (voir Décisions).
+- Tests : 352 (hors embeddings), tous verts.
 
 ### Décisions
 - **Modèle : `claude-haiku-5-5` partout (dev ET éval)** — le moins cher (0,10 $ / 0,50 $ par MTok si prompt ≤ 100K tokens). Configuré dans `.env`, jamais en dur. Effort `low` par défaut.
@@ -122,15 +128,17 @@
 - Les réponses incorrectes ne rejoignent **jamais automatiquement** le jeu d'évaluation : la correction d'un utilisateur peut elle-même être fausse ; un humain relit chaque cas et écrit le SQL attendu.
 - Endpoints synchrones (`def`) : le pipeline fait des appels bloquants (LLM, PostgreSQL), FastAPI les exécute dans son pool de threads.
 - Streamlit en extra optionnel `[ui]` (pandas, pyarrow) : l'API et la CI n'en ont pas besoin. FastAPI, uvicorn et httpx dans les dépendances principales.
-- Limites assumées (à documenter en Phase 6) : pas d'authentification ni de limitation de débit sur l'API (démo locale) ; l'historique est partagé par tous les utilisateurs.
+- Évaluation : exactitude d'exécution (résultat identique à la référence) et part des requêtes fausses signalées, mesurée surtout sur des erreurs injectées (le modèle en a fait trop peu de naturelles pour un pourcentage). Le coût par question est calculé à partir des tokens, donc stable même quand le cache sert la réponse.
+- **Calibration : poids et seuil non modifiés.** Augmenter le poids de l'accord rattraperait la seule requête fausse manquée (j10 : ville « Lyon » au lieu du magasin « Lyon Store », non vue par le juge) mais ferait aussi signaler les 2 fausses alertes (s08, r05), qui ont le même profil. Ajuster sur 20 cas serait du sur-ajustement ; à revoir avec un jeu plus grand.
+- Une référence ajoutée après coup (t04) est documentée dans le fichier et dans `docs/EVAL_RESULTS.md` (historique des runs), jamais en silence.
+- Limites assumées (à documenter en Phase 6) : benchmark écrit par l'auteur du système sur 7 tables synthétiques (plus facile que Spider/BIRD) ; pas d'authentification ni de limitation de débit sur l'API (démo locale) ; l'historique est partagé par tous les utilisateurs.
 
 ### Reste à faire
-- Phase 5 : jeu de 50+ questions écrites à la main (jamais celles de `examples.yaml`), métriques (exactitude d'exécution, exact match, détection d'hallucinations, guardrails), `make eval`, rapport Markdown + JSON, coût par question, calibration des poids du score.
-- Phase 6 : README avec les vrais chiffres, schéma d'architecture Mermaid, docker-compose complet (db + api + ui en une commande), limitations.
+- Phase 6 : README qui commence par les chiffres de `docs/EVAL_RESULTS.md`, schéma d'architecture Mermaid, docker-compose complet (db + api + ui en une commande), limitations, mise à jour des actions GitHub (avertissement Node 20).
 
 ### Prochaine étape
-- Écrire le plan détaillé de la Phase 5.
-- À faire en Phase 6 : mettre à jour `actions/checkout` et `actions/setup-python` (avertissement Node 20 déprécié dans la CI).
+- Écrire le plan détaillé de la Phase 6.
+- Après la Phase 6 : rédiger le post LinkedIn avec les chiffres réels ; rendre le dépôt public avant de partager le lien.
 
 ### Blocages
 - ~~Docker absent~~ → résolu (2026-11-13) : Docker Desktop 29.9 + WSL 2 installés, PostgreSQL 16 lancé via compose, seed complet chargé en ~24 s, test d'intégration vert. Pour reprendre : lancer Docker Desktop puis `docker compose up -d db` (les données persistent dans le volume `pgdata`).
