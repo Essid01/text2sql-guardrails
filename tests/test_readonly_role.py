@@ -80,3 +80,13 @@ def test_dangerous_functions_rejected(reader, statement: str) -> None:
 def test_statement_timeout_applies(reader) -> None:
     (value,) = reader.execute("SHOW statement_timeout").fetchone()
     assert value == "5s"
+
+
+@pytest.mark.parametrize("table", ["app.query_history", "app.feedback"])
+def test_reader_cannot_read_app_tables(seeded_db: str, reader, table: str) -> None:
+    """Other users' questions and feedback are out of reach of generated SQL."""
+    from text2sql.history import ensure_app_schema
+
+    ensure_app_schema(seeded_db)
+    with pytest.raises(errors.InsufficientPrivilege):
+        reader.execute(f"SELECT * FROM {table}")  # noqa: S608  # constant table names

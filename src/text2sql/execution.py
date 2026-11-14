@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import time
+from decimal import Decimal
 from typing import Any
 
 import psycopg
 from psycopg import errors
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
 
 from text2sql.db.engine import conninfo
 
@@ -37,6 +38,11 @@ class QueryResult(BaseModel):
     duration_ms: float
     estimated_cost: float  # planner total cost (EXPLAIN), arbitrary units
     plan: dict[str, Any]  # top node of EXPLAIN (FORMAT JSON)
+
+    @field_serializer("rows", when_used="json")
+    def _json_rows(self, rows: list[list[Any]]) -> list[list[Any]]:
+        """NUMERIC columns arrive as Decimal: send numbers, not strings, to API clients."""
+        return [[float(v) if isinstance(v, Decimal) else v for v in row] for row in rows]
 
 
 class QueryExecutor:

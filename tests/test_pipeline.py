@@ -146,3 +146,23 @@ def test_executed_answer_is_verified_and_audited(tmp_path) -> None:
     record = json.loads(audit.path.read_text("utf-8").splitlines()[0])
     assert record["confidence"] == response.verification.confidence.score
     assert record["likely_hallucination"] is False
+
+
+@pytest.mark.parametrize("sql", ["DROP TABLE orders", "DELETE FROM orders",
+                                 "SELECT * FROM app.query_history"])  # fmt: skip
+def test_user_sql_goes_through_guardrails(sql: str) -> None:
+    executor = FakeExecutor()
+    pipeline, fake_llm = _pipeline(_sql("SELECT 1"), executor)
+    response = pipeline.run_user_sql("my question", sql)
+    assert response.status == Status.BLOCKED and response.sql_source == "user"
+    assert executor.executed == [] and fake_llm.calls == []
+
+
+def test_user_sql_is_executed_without_llm_call() -> None:
+    executor = FakeExecutor()
+    pipeline, fake_llm = _pipeline(_sql("SELECT 1"), executor)
+    response = pipeline.run_user_sql("How many orders?", "SELECT COUNT(*) AS n FROM orders")
+    assert response.status == Status.EXECUTED and response.sql_source == "user"
+    assert response.result is not None and response.verification is None
+    assert executor.executed == ["SELECT COUNT(*) AS n FROM orders LIMIT 100"]
+    assert fake_llm.calls == [] and response.usage["cost_usd"] == 0

@@ -394,6 +394,9 @@ def main() -> None:
 
     tables = generate(config)
     load(settings.database_url, tables)
+    from text2sql.history import ensure_app_schema  # history/feedback tables, kept on reseed
+
+    ensure_app_schema(settings.database_url)
     if settings.readonly_database_url:
         setup_readonly_role(settings.database_url, settings.readonly_database_url)
     else:

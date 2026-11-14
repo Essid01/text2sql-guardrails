@@ -5,6 +5,10 @@ question
   -> LLM generation             (structured output)      -> clarification | refusal
   -> guardrails                 (AST analysis, LIMIT)    -> blocked
   -> executor                   (read-only role, EXPLAIN) -> blocked | error | executed
+  -> verifier                   (hallucination checks)   -> confidence report
+
+SQL edited by the user (UI) skips generation and verification but goes through the
+same guardrails and executor: a human-written query is no more trusted than the LLM's.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from __future__ import annotations
 import logging
 import time
 from enum import StrEnum
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -54,6 +58,7 @@ class PipelineResponse(BaseModel):
 
     question: str
     status: Status
+    sql_source: Literal["llm", "user"] = "llm"
     clarifications: list[Clarification] = []
     refusal_reason: str | None = None
     generation: SQLGeneration | None = None
@@ -131,38 +136,62 @@ class Text2SQLPipeline:
                 generation=output,
             )
 
-        # 3. Guardrails (the LLM output is untrusted input).
-        guard = check_sql(output.sql or "", self.guard_config)
-        if not guard.allowed or guard.sql is None:
-            return PipelineResponse(question=question, status=Status.BLOCKED,
-                                    generation=output, violations=guard.violations)  # fmt: skip
-
-        # 4. Execution (read-only role, cost and time limits).
-        try:
-            result = self.executor.execute(guard.sql)
-        except QueryTooExpensiveError as exc:
-            return PipelineResponse(
-                question=question, status=Status.BLOCKED, generation=output,
-                sql_executed=None, violations=[Violation(rule="too_expensive", message=str(exc))],
-            )  # fmt: skip
-        except (QueryTimeoutError, ExecutionError) as exc:
-            return PipelineResponse(question=question, status=Status.ERROR, generation=output,
-                                    sql_executed=guard.sql, error=str(exc))  # fmt: skip
+        # 3-4. Guardrails then execution.
+        outcome = self._guard_and_execute(question, output.sql or "", output)
+        if isinstance(outcome, PipelineResponse):
+            return outcome
+        sql_executed, result = outcome
 
         # 5. Hallucination checks (only a valid, executed query can be verified).
         verification = None
         if self.verifier is not None:
-            verification = self.verifier.verify(question, output, guard.sql, result)
+            verification = self.verifier.verify(question, output, sql_executed, result)
             for usage in verification.usages:
                 tracker.add(usage)
         return PipelineResponse(
             question=question,
             status=Status.EXECUTED,
             generation=output,
-            sql_executed=guard.sql,
+            sql_executed=sql_executed,
             result=result,
             verification=verification,
         )
+
+    def run_user_sql(self, question: str, sql: str) -> PipelineResponse:
+        """Run SQL written or edited by the user: guardrails + execution, no LLM call."""
+        start = time.perf_counter()
+        outcome = self._guard_and_execute(question.strip(), sql, None)
+        if isinstance(outcome, PipelineResponse):
+            response = outcome
+        else:
+            response = PipelineResponse(question=question.strip(), status=Status.EXECUTED,
+                                        sql_executed=outcome[0], result=outcome[1])  # fmt: skip
+        response.sql_source = "user"
+        response.usage = UsageTracker().total
+        response.duration_ms = round((time.perf_counter() - start) * 1000, 1)
+        self._audit(response)
+        return response
+
+    def _guard_and_execute(
+        self, question: str, sql: str, generation: SQLGeneration | None
+    ) -> PipelineResponse | tuple[str, QueryResult]:
+        """(executed SQL, result), or the blocked/error response."""
+        # The SQL is untrusted input, whoever wrote it.
+        guard = check_sql(sql, self.guard_config)
+        if not guard.allowed or guard.sql is None:
+            return PipelineResponse(question=question, status=Status.BLOCKED,
+                                    generation=generation, violations=guard.violations)  # fmt: skip
+        # Read-only role, cost and time limits.
+        try:
+            return guard.sql, self.executor.execute(guard.sql)
+        except QueryTooExpensiveError as exc:
+            return PipelineResponse(
+                question=question, status=Status.BLOCKED, generation=generation,
+                violations=[Violation(rule="too_expensive", message=str(exc))],
+            )  # fmt: skip
+        except (QueryTimeoutError, ExecutionError) as exc:
+            return PipelineResponse(question=question, status=Status.ERROR, generation=generation,
+                                    sql_executed=guard.sql, error=str(exc))  # fmt: skip
 
     def _audit(self, r: PipelineResponse) -> None:
         if self.audit is None:
@@ -170,6 +199,7 @@ class Text2SQLPipeline:
         self.audit.write({
             "question": r.question,
             "status": r.status,
+            "sql_source": r.sql_source,
             "sql_generated": r.generation.sql if r.generation else None,
             "sql_executed": r.sql_executed,
             "llm_confidence": r.generation.confidence if r.generation else None,

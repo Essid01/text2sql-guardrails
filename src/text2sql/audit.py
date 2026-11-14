@@ -10,7 +10,11 @@ from typing import Any
 
 
 class AuditLog:
-    """Writes one JSON object per line. Moved to the database with history in Phase 4."""
+    """Writes one JSON object per line.
+
+    Kept alongside the database history (app.query_history, used by the API): this file is
+    append-only, works without the API (CLI) and survives a database reset.
+    """
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
