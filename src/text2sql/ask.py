@@ -19,7 +19,7 @@ from text2sql.llm.factory import build_llm_client
 from text2sql.pipeline import PipelineResponse, Status, Text2SQLPipeline
 from text2sql.prompt.ambiguity import load_glossary
 from text2sql.prompt.builder import PromptBuilder
-from text2sql.schema import introspect
+from text2sql.schema import DatabaseSchema, introspect
 from text2sql.schema.embedder import Embedder, SentenceTransformerEmbedder
 from text2sql.schema.retriever import SchemaRetriever
 from text2sql.verification.backtranslation import BackTranslator
@@ -35,11 +35,13 @@ def _optional_embedder(settings: Settings) -> Embedder | None:
     return SentenceTransformerEmbedder(settings.embedding_model)
 
 
-def build_pipeline(settings: Settings, use_embedder: bool = True) -> Text2SQLPipeline:
-    """Wire every component from the settings (.env)."""
+def build_pipeline(
+    settings: Settings, use_embedder: bool = True, schema: DatabaseSchema | None = None
+) -> Text2SQLPipeline:
+    """Wire every component from the settings (.env). `schema` avoids a second introspection."""
     if not settings.readonly_database_url:
         raise RuntimeError("READONLY_DATABASE_URL is not set: generated SQL must not run as admin")
-    schema = introspect(get_engine(settings.database_url))
+    schema = schema or introspect(get_engine(settings.database_url))
     embedder = _optional_embedder(settings) if use_embedder else None
     retriever = None
     if settings.schema_top_k is not None and embedder is not None:
