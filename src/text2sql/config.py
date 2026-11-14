@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     verify_multi_query: bool = True  # 1 generation + 1 execution (~$0.0007)
     hallucination_threshold: float = Field(default=0.6, ge=0, le=1)
 
+    # API / UI (Phase 4). The UI only talks to the API, never to the database.
+    api_url: str = "http://localhost:8000"
+    api_timeout_s: float = Field(default=60.0, gt=0)
+
     # Logging
     log_level: str = "INFO"
     audit_log_path: str = "logs/audit.jsonl"
